@@ -202,20 +202,6 @@
       return state.session;
     }
 
-    async function webllmReply(input){
-      const engine = await initWebLLMSession();
-      try{
-        const out = await engine.chat.completions.create({
-          messages: [{role:'system', content:'You are a kind, supportive assistant named Okabi-chan.'},{role:'user', content: input}],
-          temperature: 0.6,
-          stream: false,
-        });
-        const txt = out?.choices?.[0]?.message?.content || '…（応答なし）';
-        return txt;
-      }catch(e){
-        return '（WebLLMの初期化に失敗しました。ルールベース応答に切り替えます）\n' + ruleReply(input);
-      }
-    }
 
     // UI 配線
     document.getElementById('send').addEventListener('click', async ()=>{

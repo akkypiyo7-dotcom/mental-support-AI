@@ -109,6 +109,42 @@
   <!-- WebLLM（必要な時だけ動的ロード） -->
   <script>
     const state = { engine: 'rules', webllm: null, session: null };
+/* ▼ ここから追記：人格の指示（systemプロンプト） */
+  const SYSTEM_PROMPT = `
+あなたは「お黴ちゃんAI」。丁寧語を基本に、友人のように固すぎない口調で、
+家事・育児・学業・人間関係など日々の不安に寄り添う共感型サポートを行います。
+相手の気持ちを否定せず受け止め、短く実行しやすい提案を1〜2個だけ返す。
+過激・攻撃的・断定的な表現は避ける。必要なら英語ユーザーには英語で対応する。
+
+【危機対応】
+- 自傷や希死念慮の表現を検知したら「共感 → 安全確認 → 窓口案内（初回のみ）」の順で短く。
+- 窓口案内の繰り返しはしない（1会話セッション中1回まで）。
+- 行動を助長・具体的手段の提示はしない。
+
+【窓口（初回案内用・要約でOK）】
+- 日本: いのちの電話 0570-783-556 / よりそいホットライン 0120-279-338
+- US: 988  /  UK & ROI: Samaritans 116 123
+- その他の国: “suicide prevention hotline <country>” で検索を提案
+`;
+
+  // セッション中に窓口案内を1回だけ出すためのフラグ
+  let crisisHintShown = false;
+
+  // 危険ワードを検出したら適切なメッセージを返す（なければ null）
+  function crisisGuard(text){
+    const danger = /(死にたい|自殺|消えたい|消えた|リスカ|自傷|もう終わり|生きたくない|kill myself|suicide|end my life)/i.test(text);
+    if(!danger) return null;
+    if(!crisisHintShown){
+      crisisHintShown = true;
+      return `とてもつらいですね。いまは安全な場所にいますか？呼吸をゆっくり整えましょう。
+もし今すぐ誰かと話したいときは、次の窓口も使えます（初回のみのご案内です）。
+- 日本: いのちの電話 0570-783-556 / よりそいホットライン 0120-279-338
+- US: 988 / UK&ROI: Samaritans 116 123
+よければ、何が一番しんどいのか少しだけ教えてください。`;
+    }
+    return `つらい気持ちが続いていますね。いまはまず安全の確保を優先しましょう。ゆっくり深呼吸…話せる範囲で、今いちばん困っていることを一緒に整理しましょう。`;
+  }
+
 
     const logEl = document.getElementById('log');
     function pushMsg(role, text){
@@ -123,16 +159,28 @@
     }
 
     // ルールベース簡易応答（無料デモ用）
-    function ruleReply(input){
-      const s = input.trim();
-      if(!s) return "";
-      const lowers = s.toLowerCase();
-      if(lowers.includes('hello') || s.includes('こんにちは')) return 'こんにちは！お黴ちゃんだよ。今日は何を話す？';
-      if(s.includes('つかれ')||s.includes('疲れ')) return 'おつかれさま…深呼吸いっかいしよ。3秒吸って、4秒止めて、6秒はいてみよう。';
-      if(s.includes('子')||s.includes('育児')) return '育児は毎日が実験だよね。一緒に小さい成功を探そう。';
-      if(s.includes('不安')||s.includes('こわ')) return '不安を言葉にできたの、もう半分進んでる合図だよ。';
-      return 'うんうん、聞いてるよ。もう少し詳しく教えて？';
-    }
+ async function webllmReply(input){
+  const engine = await initWebLLMSession();
+
+  // ▼ 先に危機ワードをチェック（ヒットしたらここで返す）
+  const crisis = crisisGuard(input);
+  if (crisis) return crisis;
+
+  try{
+    const out = await engine.chat.completions.create({
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },   // ← ここを差し替え
+        { role: 'user',   content: input }
+      ],
+      temperature: 0.6,
+      stream: false,
+    });
+    const txt = out?.choices?.[0]?.message?.content || '…（応答なし）';
+    return txt;
+  }catch(e){
+    return '（WebLLMの初期化に失敗しました。ルールベース応答に切り替えます）\n' + ruleReply(input);
+  }
+}
 
     // WebLLM を必要時にロード
     async function ensureWebLLM(){
